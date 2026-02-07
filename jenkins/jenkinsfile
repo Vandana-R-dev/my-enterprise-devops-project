@@ -1,53 +1,116 @@
 pipeline {
-    agent none
+    agent any
+    
     environment {
         REGISTRY = "quay.io/rakeshreddy1990/demo-app"
         IMAGE_TAG = "${BUILD_NUMBER}"
+        DOCKER_IMAGE = "${REGISTRY}:${IMAGE_TAG}"
+        DOCKER_LATEST = "${REGISTRY}:latest"
     }
+    
     stages {
-        stage('Build & Push') {
-            agent {
-                docker {
-                    image 'docker:26.1-dind'  // Docker-in-Docker
-                    args '--privileged'
-                }
-            }
+        stage('Checkout') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'quay-creds', usernameVariable: 'QUAY_USER', passwordVariable: 'QUAY_PASS')]) {
+                checkout scm
+                sh 'ls -la helm/ app/'
+            }
+        }
+        
+        stage('Build Image') {
+            steps {
+                sh '''
+                docker build -t ${DOCKER_IMAGE} ./app/
+                docker tag ${DOCKER_IMAGE} ${DOCKER_LATEST}
+                '''
+            }
+        }
+        
+        stage('Push to Quay') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'quay-creds', 
+                                    usernameVariable: 'QUAY_USER', 
+                                    passwordVariable: 'QUAY_PASS')]) {
                     sh '''
-                    docker build -t $REGISTRY:$IMAGE_TAG ./app/
-                    docker login -u $QUAY_USER -p $QUAY_PASS quay.io
-                    docker push $REGISTRY:$IMAGE_TAG
-                    docker tag $REGISTRY:$IMAGE_TAG $REGISTRY:latest
-                    docker push $REGISTRY:latest
+                    echo $QUAY_PASS | docker login -u $QUAY_USER --password-stdin quay.io
+                    docker push ${DOCKER_IMAGE}
+                    docker push ${DOCKER_LATEST}
                     '''
                 }
             }
         }
-        stage('Deploy Dev') {
-            agent any
+        
+        stage('Deploy to Dev') {
             steps {
-                withCredentials([string(credentialsId: 'oc-token-dev', variable: 'TOKEN')]) {
+                withCredentials([string(credentialsId: 'oc-token-dev', variable: 'OC_TOKEN')]) {
                     sh '''
-                    oc login https://api.crc.testing:6443 --token=$TOKEN --insecure-skip-tls-verify=true
+                    oc login https://api.crc.testing:6443 --token=${OC_TOKEN} --insecure-skip-tls-verify=true
                     oc project dev
-                    helm upgrade --install app-dev ./helm -f helm/values-dev.yaml --set image.tag=$IMAGE_TAG -n dev
+                    helm upgrade --install app-dev ./helm/ \\
+                      --set image.repository=quay.io/rakeshreddy1990/demo-app \\
+                      --set image.tag=${IMAGE_TAG} \\
+                      --namespace dev
                     '''
                 }
             }
         }
-        stage('Promote SIT') {
-            agent any
+        
+        stage('Test Dev') {
             steps {
-                input "Deploy ${BUILD_NUMBER} to SIT?"
-                withCredentials([string(credentialsId: 'oc-token-sit', variable: 'TOKEN')]) {
+                sh '''
+                oc rollout status deployment/app-dev -n dev --timeout=300s
+                curl -f http://app-dev.dev.svc.cluster.local:8080/health || true
+                '''
+            }
+        }
+        
+        stage('Promote to SIT - APPROVAL REQUIRED') {
+            steps {
+                input message: "Approve deployment of build #${BUILD_NUMBER} to SIT?", 
+                      ok: "Deploy to SIT",
+                      submitter: "devops-team"
+            }
+            steps {
+                withCredentials([string(credentialsId: 'oc-token-sit', variable: 'OC_TOKEN')]) {
                     sh '''
-                    oc login https://api.crc.testing:6443 --token=$TOKEN --insecure-skip-tls-verify=true
+                    oc login https://api.crc.testing:6443 --token=${OC_TOKEN} --insecure-skip-tls-verify=true
                     oc project sit
-                    helm upgrade --install app-sit ./helm -f helm/values-sit.yaml --set image.tag=$IMAGE_TAG -n sit
+                    helm upgrade --install app-sit ./helm/ \\
+                      --set image.repository=quay.io/rakeshreddy1990/demo-app \\
+                      --set image.tag=${IMAGE_TAG} \\
+                      --namespace sit
                     '''
                 }
             }
+        }
+        
+        stage('Validate SIT') {
+            steps {
+                sh '''
+                oc rollout status deployment/app-sit -n sit --timeout=300s
+                sleep 30
+                curl -f http://app-sit.sit.svc.cluster.local:8080/health || true
+                '''
+            }
+        }
+    }
+    
+    post {
+        always {
+            sh '''
+            echo "Pipeline completed - Build #${BUILD_NUMBER}"
+            oc get pods -n dev,sit
+            '''
+        }
+        success {
+            echo "🎉 PIPELINE SUCCESSFUL - ${DOCKER_IMAGE} deployed to SIT!"
+        }
+        failure {
+            echo "❌ Pipeline failed - Check logs above"
+            emailext (
+                subject: "Build FAILED: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body: "Check console output at ${env.BUILD_URL}",
+                to: "team@company.com"
+            )
         }
     }
 }
