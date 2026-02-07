@@ -1,5 +1,5 @@
 pipeline {
-  agent any
+   agent { label 'podman' }
 
   environment {
     REGISTRY = "quay.io/rakeshreddy1990/demo-app"
