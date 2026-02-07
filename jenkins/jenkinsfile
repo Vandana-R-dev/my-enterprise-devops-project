@@ -15,25 +15,25 @@ pipeline {
       }
     }
 
-    stage('Build Image') {
-      steps {
-        sh '''
-        echo "Building image $REGISTRY:$IMAGE_TAG"
-        docker build -t $REGISTRY:$IMAGE_TAG app/
-        '''
-      }
-    }
+   stage('Build Image') {
+  steps {
+    sh '''
+    echo "Building image $REGISTRY:$IMAGE_TAG"
+    podman build -t $REGISTRY:$IMAGE_TAG app/
+    '''
+  }
+}
 
-    stage('Push Image to Quay') {
-      steps {
-        withCredentials([usernamePassword(credentialsId: 'quay-creds', usernameVariable: 'USER', passwordVariable: 'PASS')]) {
-          sh '''
-          echo "Logging into Quay"
-          docker login -u $USER -p $PASS quay.io
-          docker push $REGISTRY:$IMAGE_TAG
-          '''
-        }
-      }
+stage('Push Image to Quay') {
+  steps {
+    withCredentials([usernamePassword(credentialsId: 'quay-creds', usernameVariable: 'USER', passwordVariable: 'PASS')]) {
+      sh '''
+      echo "Logging into Quay"
+      podman login -u $USER -p $PASS quay.io
+      podman push $REGISTRY:$IMAGE_TAG
+      '''
+    }
+  }
     }
 
     stage('Deploy to DEV') {
