@@ -1,0 +1,11 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "enterprise-app.fullname" . }}
+spec:
+  to:
+    kind: Service
+    name: {{ include "enterprise-app.fullname" . }}
+  port:
+    targetPort: http
+
