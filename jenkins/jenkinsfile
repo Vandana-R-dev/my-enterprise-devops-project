@@ -8,11 +8,15 @@ pipeline {
 
   stages {
 
-    stage('Build Image') {
-      steps {
-        sh 'docker build -t $REGISTRY:$IMAGE_TAG app/'
-      }
-    }
+  stage('Build Image') {
+            steps {
+                sh '''
+                podman build -t quay.io/rakeshreddy1990/demo-app:4 app/
+                podman tag quay.io/rakeshreddy1990/demo-app:4 quay.io/rakeshreddy1990/demo-app:latest
+                podman push quay.io/rakeshreddy1990/demo-app:latest
+                '''
+            }
+        }
 
     stage('Push Image to Quay') {
       steps {
