@@ -1,58 +1,51 @@
 pipeline {
-  agent any
-
-  environment {
-    REGISTRY = "quay.io/rakeshreddy1990/demo-app"
-    IMAGE_TAG = "${BUILD_NUMBER}"
-  }
-
-  stages {
-
-  stage('Build Image') {
+    agent none  // ← CRITICAL: No top-level agent
+    environment {
+        REGISTRY = "quay.io/rakeshreddy1990/demo-app"
+        IMAGE_TAG = "${BUILD_NUMBER}"
+    }
+    stages {
+        stage('Build Image') {
+            agent {
+                docker {  // ← Docker agent for build
+                    image 'docker:26.1'
+                    args '-v /var/run/docker.sock:/var/run/docker.sock --privileged'
+                }
+            }
             steps {
                 sh '''
-                podman build -t quay.io/rakeshreddy1990/demo-app:4 app/
-                podman tag quay.io/rakeshreddy1990/demo-app:4 quay.io/rakeshreddy1990/demo-app:latest
-                podman push quay.io/rakeshreddy1990/demo-app:latest
+                docker build -t $REGISTRY:$IMAGE_TAG ./app/
+                docker tag $REGISTRY:$IMAGE_TAG $REGISTRY:latest
+                docker login -u $USER -p $PASS quay.io
+                docker push $REGISTRY:$IMAGE_TAG
+                docker push $REGISTRY:latest
                 '''
             }
         }
-
-    stage('Push Image to Quay') {
-      steps {
-        withCredentials([usernamePassword(credentialsId: 'quay-creds', usernameVariable: 'USER', passwordVariable: 'PASS')]) {
-          sh '''
-          docker login -u $USER -p $PASS quay.io
-          docker push $REGISTRY:$IMAGE_TAG
-          '''
+        stage('Deploy to Dev') {
+            agent any
+            steps {
+                withCredentials([string(credentialsId: 'oc-token-dev', variable: 'TOKEN')]) {
+                    sh '''
+                    oc login https://api.crc.testing:6443 --token=$TOKEN --insecure-skip-tls-verify
+                    oc project dev
+                    helm upgrade --install app-dev helm -f helm/values-dev.yaml --set image.tag=$IMAGE_TAG -n dev
+                    '''
+                }
+            }
         }
-      }
-    }
-
-    stage('Deploy to Dev') {
-      steps {
-        withCredentials([string(credentialsId: 'oc-token-dev', variable: 'TOKEN')]) {
-          sh '''
-          oc login https://api.crc.testing:6443 --token=$TOKEN --insecure-skip-tls-verify
-          oc project dev
-          helm upgrade --install app-dev helm -f helm/values-dev.yaml --set image.tag=$IMAGE_TAG -n dev
-          '''
+        stage('Promote to SIT') {
+            agent any
+            steps {
+                input message: "Deploy build ${BUILD_NUMBER} to SIT?"
+                withCredentials([string(credentialsId: 'oc-token-sit', variable: 'TOKEN')]) {
+                    sh '''
+                    oc login https://api.crc.testing:6443 --token=$TOKEN --insecure-skip-tls-verify
+                    oc project sit
+                    helm upgrade --install app-sit helm -f helm/values-sit.yaml --set image.tag=$IMAGE_TAG -n sit
+                    '''
+                }
+            }
         }
-      }
     }
-
-    stage('Promote to SIT') {
-      steps {
-        input message: "Deploy build ${BUILD_NUMBER} to SIT?"
-        withCredentials([string(credentialsId: 'oc-token-sit', variable: 'TOKEN')]) {
-          sh '''
-          oc login https://api.crc.testing:6443 --token=$TOKEN --insecure-skip-tls-verify
-          oc project sit
-          helm upgrade --install app-sit helm -f helm/values-sit.yaml --set image.tag=$IMAGE_TAG -n sit
-          '''
-        }
-      }
-    }
-  }
 }
-
