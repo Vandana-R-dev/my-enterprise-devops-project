@@ -1,92 +1,59 @@
 pipeline {
-   agent { label 'podman' }
-
-  environment {
-    REGISTRY = "quay.io/rakeshreddy1990/demo-app"
-    IMAGE_TAG = "${BUILD_NUMBER}"
-    CLUSTER_URL = "https://api.crc.testing:6443"
-  }
-
-  stages {
-
-    stage('Checkout Code') {
-      steps {
-        checkout scm
-      }
+    agent none
+    environment {
+        REGISTRY = "quay.io/rakeshreddy1990/demo-app"
+        IMAGE_TAG = "${BUILD_NUMBER}"
     }
-
-   stage('Build Image') {
-  steps {
-    sh '''
-    echo "Building image $REGISTRY:$IMAGE_TAG"
-    docker build -t $REGISTRY:$IMAGE_TAG ./app/
-    docker tag $REGISTRY:$IMAGE_TAG $REGISTRY:latest
-    '''
-  }
-}
-
-stage('Push Image to Quay') {
-  steps {
-    withCredentials([usernamePassword(credentialsId: 'quay-creds', usernameVariable: 'USER', passwordVariable: 'PASS')]) {
-      sh '''
-      echo "Logging into Quay"
-      echo $PASS | docker login -u $USER --password-stdin quay.io
-      docker push $REGISTRY:$IMAGE_TAG
-      docker push $REGISTRY:latest
-      '''
-    }
-  }
-    }
-
-    stage('Deploy to DEV') {
-      steps {
-        withCredentials([string(credentialsId: 'oc-token-dev', variable: 'TOKEN')]) {
-          sh '''
-          echo "Deploying to DEV namespace"
-          oc login $CLUSTER_URL --token=$TOKEN --insecure-skip-tls-verify
-          oc project dev
-
-          helm upgrade --install app-dev helm \
-            -f helm/values-dev.yaml \
-            --set image.repository=$REGISTRY \
-            --set image.tag=$IMAGE_TAG \
-            -n dev
-          '''
+    stages {
+        stage('Build & Push') {
+            agent {
+                docker {
+                    image 'docker:27.3-dind'
+                    args '--privileged'
+                }
+            }
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'quay-creds', 
+                                    usernameVariable: 'USER', 
+                                    passwordVariable: 'PASS')]) {
+                    sh '''
+                    docker build -t $REGISTRY:$IMAGE_TAG ./app/
+                    docker tag $REGISTRY:$IMAGE_TAG $REGISTRY:latest
+                    echo $PASS | docker login -u $USER --password-stdin quay.io
+                    docker push $REGISTRY:$IMAGE_TAG
+                    docker push $REGISTRY:latest
+                    '''
+                }
+            }
         }
-      }
-    }
-
-    stage('Approval for SIT') {
-      steps {
-        input message: "Deploy build ${BUILD_NUMBER} to SIT?"
-      }
-    }
-
-    stage('Deploy to SIT') {
-      steps {
-        withCredentials([string(credentialsId: 'oc-token-sit', variable: 'TOKEN')]) {
-          sh '''
-          echo "Deploying to SIT namespace"
-          oc login $CLUSTER_URL --token=$TOKEN --insecure-skip-tls-verify
-          oc project sit
-
-          helm upgrade --install app-sit helm \
-            -f helm/values-sit.yaml \
-            --set image.repository=$REGISTRY \
-            --set image.tag=$IMAGE_TAG \
-            -n sit
-          '''
+        
+        stage('Deploy Dev') {
+            agent any
+            steps {
+                withCredentials([string(credentialsId: 'oc-token-dev', variable: 'TOKEN')]) {
+                    sh '''
+                    oc login https://api.crc.testing:6443 --token=$TOKEN --insecure-skip-tls-verify=true
+                    oc project dev
+                    helm upgrade --install app-dev ./helm -f helm/values-dev.yaml --set image.tag=$IMAGE_TAG -n dev
+                    '''
+                }
+            }
         }
-      }
+        
+        stage('Promote to SIT') {
+            steps {
+                input message: "Deploy build ${BUILD_NUMBER} to SIT?"
+            }
+            agent any
+            steps {
+                withCredentials([string(credentialsId: 'oc-token-sit', variable: 'TOKEN')]) {
+                    sh '''
+                    oc login https://api.crc.testing:6443 --token=$TOKEN --insecure-skip-tls-verify=true
+                    oc project sit
+                    helm upgrade --install app-sit ./helm -f helm/values-sit.yaml --set image.tag=$IMAGE_TAG -n sit
+                    '''
+                }
+            }
+        }
     }
-  }
-
-  post {
-    success {
-      echo "Pipeline completed successfully 🚀"
-    }
-    failure {
-      echo "Pipeline failed ❌ Check console logs"
-    }
-  }
 }
