@@ -19,7 +19,8 @@ pipeline {
   steps {
     sh '''
     echo "Building image $REGISTRY:$IMAGE_TAG"
-    podman build -t $REGISTRY:$IMAGE_TAG app/
+    docker build -t $REGISTRY:$IMAGE_TAG ./app/
+    docker tag $REGISTRY:$IMAGE_TAG $REGISTRY:latest
     '''
   }
 }
@@ -29,8 +30,9 @@ stage('Push Image to Quay') {
     withCredentials([usernamePassword(credentialsId: 'quay-creds', usernameVariable: 'USER', passwordVariable: 'PASS')]) {
       sh '''
       echo "Logging into Quay"
-      podman login -u $USER -p $PASS quay.io
-      podman push $REGISTRY:$IMAGE_TAG
+      echo $PASS | docker login -u $USER --password-stdin quay.io
+      docker push $REGISTRY:$IMAGE_TAG
+      docker push $REGISTRY:latest
       '''
     }
   }
