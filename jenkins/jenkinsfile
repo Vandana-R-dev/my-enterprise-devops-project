@@ -41,11 +41,9 @@ pipeline {
         }
         
         stage('Promote to SIT') {
-            steps {
-                input message: "Deploy build ${BUILD_NUMBER} to SIT?"
-            }
             agent any
             steps {
+                input message: "Deploy build ${BUILD_NUMBER} to SIT?"
                 withCredentials([string(credentialsId: 'oc-token-sit', variable: 'TOKEN')]) {
                     sh '''
                     oc login https://api.crc.testing:6443 --token=$TOKEN --insecure-skip-tls-verify=true
