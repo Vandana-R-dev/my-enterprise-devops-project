@@ -9,7 +9,7 @@ pipeline {
             agent {
                 docker {
                     image 'docker:27.3-dind'
-                    args '--privileged'
+                    args '--privileged --user root'
                 }
             }
             steps {
@@ -17,6 +17,8 @@ pipeline {
                                     usernameVariable: 'USER', 
                                     passwordVariable: 'PASS')]) {
                     sh '''
+                    dockerd-entrypoint.sh &
+                    sleep 10
                     docker build -t $REGISTRY:$IMAGE_TAG ./app/
                     docker tag $REGISTRY:$IMAGE_TAG $REGISTRY:latest
                     echo $PASS | docker login -u $USER --password-stdin quay.io
