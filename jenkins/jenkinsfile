@@ -8,8 +8,8 @@ pipeline {
         stage('Build & Push') {
             agent {
                 docker {
-                    image 'docker:27.3-dind'
-                    args '--privileged --user root'
+                    image 'docker:27.3'
+                    args '--privileged -u root'
                 }
             }
             steps {
@@ -17,8 +17,7 @@ pipeline {
                                     usernameVariable: 'USER', 
                                     passwordVariable: 'PASS')]) {
                     sh '''
-                    dockerd-entrypoint.sh &
-                    sleep 10
+                    apk add --no-cache docker-cli
                     docker build -t $REGISTRY:$IMAGE_TAG ./app/
                     docker tag $REGISTRY:$IMAGE_TAG $REGISTRY:latest
                     echo $PASS | docker login -u $USER --password-stdin quay.io
